@@ -46,7 +46,6 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { Spinner } from "@/components/ui/spinner"
-import { useIsMobile } from "@/components/ui/use-mobile"
 
 const SEED_SUBGRAPHS: Omit<Subgraph, "id" | "order" | "updatedAt">[] = [
   {
@@ -89,7 +88,6 @@ type Comment {
 ]
 
 export function Playground() {
-  const isMobile = useIsMobile()
   const [hydrated, setHydrated] = useState(false)
   const [subgraphs, setSubgraphs] = useState<Subgraph[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -398,113 +396,105 @@ type Query {
         </div>
       ) : (
         <>
-          {isMobile ? (
-            <div className="relative flex flex-1 flex-col overflow-hidden pb-[calc(4.5rem+env(safe-area-inset-bottom))]">
-              <div className="min-h-0 flex-1 overflow-hidden">
-                {mobileTab === "subgraphs" && (
-                  <SubgraphSidebar
-                    subgraphs={subgraphs}
-                    selectedId={selectedId}
-                    statuses={perSubgraphStatus}
-                    onSelect={(id) => {
-                      setSelectedId(id)
-                      setMobileTab("editor")
-                    }}
-                    onAdd={() => {
-                      handleAdd()
-                      setMobileTab("editor")
-                    }}
-                    onDelete={handleDelete}
-                  />
-                )}
-                {mobileTab === "editor" && (
-                  <SubgraphEditor
-                    subgraph={selected}
-                    onChange={(patch) => selected && updateSubgraph(selected.id, patch)}
-                    onDelete={() => {
-                      selected && handleDelete(selected.id)
-                      setMobileTab("subgraphs")
-                    }}
-                    onAdd={() => {
-                      handleAdd()
-                      setMobileTab("editor")
-                    }}
-                  />
-                )}
-                {mobileTab === "result" && (
-                  <CompositionResult
-                    outcome={outcome}
-                    pending={pending}
-                    switchingVersion={switchingVersion}
-                  />
-                )}
-              </div>
+          {/* ── Desktop: 3-column resizable layout ── */}
+          <ResizablePanelGroup direction="horizontal" className="hidden flex-1 md:flex">
+            <ResizablePanel defaultSize={20} minSize={15} maxSize={32} className="bg-sidebar">
+              <SubgraphSidebar
+                subgraphs={subgraphs}
+                selectedId={selectedId}
+                statuses={perSubgraphStatus}
+                onSelect={setSelectedId}
+                onAdd={handleAdd}
+                onDelete={handleDelete}
+              />
+            </ResizablePanel>
 
-              <nav
-                className="absolute inset-x-0 bottom-0 z-20 flex shrink-0 border-t bg-background/95 pb-[max(env(safe-area-inset-bottom),0.5rem)] backdrop-blur"
-                aria-label="Mobile navigation"
-              >
-                {(
-                  [
-                    { id: "subgraphs", label: "Subgraphs", Icon: LayoutList },
-                    { id: "editor", label: "Editor", Icon: Code2 },
-                    { id: "result", label: "Result", Icon: Network },
-                  ] as const
-                ).map(({ id, label, Icon }) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setMobileTab(id)}
-                    aria-current={mobileTab === id ? "page" : undefined}
-                    className={cn(
-                      "relative flex flex-1 flex-col items-center gap-1 py-2.5 text-[10px] font-medium transition-colors",
-                      mobileTab === id ? "text-primary" : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    <Icon className="h-[18px] w-[18px]" aria-hidden />
-                    {label}
-                    {id === "result" && pending && (
-                      <span className="absolute mt-0.5 h-1 w-1 rounded-full bg-primary" aria-hidden />
-                    )}
-                  </button>
-                ))}
-              </nav>
-            </div>
-          ) : (
-            <ResizablePanelGroup direction="horizontal" className="flex flex-1 flex-row">
-              <ResizablePanel defaultSize={20} minSize={15} maxSize={32} className="bg-sidebar">
+            <ResizableHandle withHandle />
+
+            <ResizablePanel defaultSize={45} minSize={25}>
+              <SubgraphEditor
+                subgraph={selected}
+                onChange={(patch) => selected && updateSubgraph(selected.id, patch)}
+                onDelete={() => selected && handleDelete(selected.id)}
+                onAdd={handleAdd}
+              />
+            </ResizablePanel>
+
+            <ResizableHandle withHandle />
+
+            <ResizablePanel defaultSize={35} minSize={25}>
+              <CompositionResult
+                outcome={outcome}
+                pending={pending}
+                switchingVersion={switchingVersion}
+              />
+            </ResizablePanel>
+          </ResizablePanelGroup>
+
+          {/* ── Mobile: full-screen panels + bottom tab bar ── */}
+          <div className="flex flex-1 flex-col overflow-hidden md:hidden">
+            {/* Active panel */}
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {mobileTab === "subgraphs" && (
                 <SubgraphSidebar
                   subgraphs={subgraphs}
                   selectedId={selectedId}
                   statuses={perSubgraphStatus}
-                  onSelect={setSelectedId}
-                  onAdd={handleAdd}
+                  onSelect={(id) => { setSelectedId(id); setMobileTab("editor") }}
+                  onAdd={() => { handleAdd(); setMobileTab("editor") }}
                   onDelete={handleDelete}
                 />
-              </ResizablePanel>
-
-              <ResizableHandle withHandle />
-
-              <ResizablePanel defaultSize={45} minSize={25}>
+              )}
+              {mobileTab === "editor" && (
                 <SubgraphEditor
                   subgraph={selected}
                   onChange={(patch) => selected && updateSubgraph(selected.id, patch)}
-                  onDelete={() => selected && handleDelete(selected.id)}
-                  onAdd={handleAdd}
+                  onDelete={() => { selected && handleDelete(selected.id); setMobileTab("subgraphs") }}
+                  onAdd={() => { handleAdd(); setMobileTab("editor") }}
                 />
-              </ResizablePanel>
-
-              <ResizableHandle withHandle />
-
-              <ResizablePanel defaultSize={35} minSize={25}>
+              )}
+              {mobileTab === "result" && (
                 <CompositionResult
                   outcome={outcome}
                   pending={pending}
                   switchingVersion={switchingVersion}
                 />
-              </ResizablePanel>
-            </ResizablePanelGroup>
-          )}
+              )}
+            </div>
+
+            {/* Bottom tab bar */}
+            <nav
+              className="flex shrink-0 border-t bg-background"
+              aria-label="Mobile navigation"
+            >
+              {(
+                [
+                  { id: "subgraphs", label: "Subgraphs", Icon: LayoutList },
+                  { id: "editor",    label: "Editor",    Icon: Code2 },
+                  { id: "result",    label: "Result",    Icon: Network },
+                ] as const
+              ).map(({ id, label, Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setMobileTab(id)}
+                  aria-current={mobileTab === id ? "page" : undefined}
+                  className={cn(
+                    "flex flex-1 flex-col items-center gap-1 py-2.5 text-[10px] font-medium transition-colors",
+                    mobileTab === id
+                      ? "text-primary"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <Icon className="h-4.5 w-4.5 h-[18px] w-[18px]" aria-hidden />
+                  {label}
+                  {id === "result" && pending && (
+                    <span className="absolute mt-0.5 h-1 w-1 rounded-full bg-primary" aria-hidden />
+                  )}
+                </button>
+              ))}
+            </nav>
+          </div>
         </>
       )}
     </div>
