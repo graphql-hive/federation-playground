@@ -8,12 +8,22 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable"
-import { Plus, Trash2, RotateCcw, GitBranch, LayoutList, Code2, Network } from "lucide-react"
+import {
+  Code2,
+  GitBranch,
+  LayoutList,
+  Network,
+  Plus,
+  RotateCcw,
+  Share2,
+  Trash2,
+} from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { SdlEditor } from "@/components/sdl-editor"
 import { SubgraphItem } from "@/components/subgraph-item"
 import { CompositionResult } from "@/components/composition-result"
 import { useDebouncedValue } from "@/hooks/use-debounced-value"
+import { toast } from "@/hooks/use-toast"
 import {
   type Subgraph,
   getAllSubgraphs,
@@ -46,6 +56,12 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { Spinner } from "@/components/ui/spinner"
+import {
+  createSharePayload,
+  createShareUrl,
+  readSharePayloadFromHash,
+  type SharePayload,
+} from "@/lib/share"
 
 const SEED_SUBGRAPHS: Omit<Subgraph, "id" | "order" | "updatedAt">[] = [
   {
@@ -87,6 +103,40 @@ type Comment {
   },
 ]
 
+function createSeedSubgraphs(): Subgraph[] {
+  const now = Date.now()
+  return SEED_SUBGRAPHS.map((subgraph, index) => ({
+    ...subgraph,
+    id: newId(),
+    order: index,
+    updatedAt: now,
+  }))
+}
+
+function createImportedSubgraphs(payload: SharePayload): Subgraph[] {
+  const now = Date.now()
+  return payload.subgraphs.map((subgraph, index) => ({
+    id: newId(),
+    name: subgraph.name,
+    sdl: subgraph.sdl,
+    enabled: true,
+    order: index,
+    updatedAt: now,
+  }))
+}
+
+function getSelectedIdForImport(subgraphs: Subgraph[], selectedIndex: number | null): string | null {
+  if (subgraphs.length === 0) {
+    return null
+  }
+
+  if (selectedIndex !== null) {
+    return subgraphs[selectedIndex]?.id ?? subgraphs[0]?.id ?? null
+  }
+
+  return subgraphs[0]?.id ?? null
+}
+
 export function Playground() {
   const [hydrated, setHydrated] = useState(false)
   const [subgraphs, setSubgraphs] = useState<Subgraph[]>([])
@@ -107,6 +157,21 @@ export function Playground() {
   // Tracks the version currently being downloaded (only set when the requested
   // version isn't already in the runtime module cache).
   const [switchingVersion, setSwitchingVersion] = useState<string | null>(null)
+  const [pendingImport, setPendingImport] = useState<SharePayload | null>(null)
+  const [importDialogOpen, setImportDialogOpen] = useState(false)
+
+  const applyImportedState = useCallback(async (payload: SharePayload) => {
+    const importedSubgraphs = createImportedSubgraphs(payload)
+    await clearSubgraphs()
+    await Promise.all(importedSubgraphs.map(putSubgraph))
+
+    setSubgraphs(importedSubgraphs)
+    setSelectedId(getSelectedIdForImport(importedSubgraphs, payload.selectedIndex))
+    setVersion(payload.compositionVersion)
+    await setSetting("version", payload.compositionVersion)
+
+    setPendingImport(null)
+  }, [])
 
   // Hydrate from IndexedDB
   useEffect(() => {
@@ -114,24 +179,42 @@ export function Playground() {
       ; (async () => {
         try {
           let all = await getAllSubgraphs()
-          if (all.length === 0) {
-            // seed
-            const now = Date.now()
-            const seeded: Subgraph[] = SEED_SUBGRAPHS.map((s, i) => ({
-              ...s,
-              id: newId(),
-              order: i,
-              updatedAt: now,
-            }))
-            await Promise.all(seeded.map(putSubgraph))
-            all = seeded
+          const hadStoredSubgraphs = all.length > 0
+          const { payload: sharedPayload, error: sharedPayloadError } = readSharePayloadFromHash(
+            window.location.hash,
+          )
+          if (sharedPayloadError && mounted) {
+            toast({
+              variant: "destructive",
+              title: "Invalid shared link",
+              description: sharedPayloadError,
+            })
           }
+
           // Load persisted version preference
           const persistedVersion = await getSetting<string>("version")
           if (!mounted) return
-          setSubgraphs(all)
-          setSelectedId(all[0]?.id ?? null)
-          if (persistedVersion) setVersion(persistedVersion)
+
+          if (sharedPayload) {
+            if (hadStoredSubgraphs) {
+              setSubgraphs(all)
+              setSelectedId(all[0]?.id ?? null)
+              if (persistedVersion) setVersion(persistedVersion)
+              setPendingImport(sharedPayload)
+              setImportDialogOpen(true)
+            } else {
+              await applyImportedState(sharedPayload)
+            }
+          } else {
+            if (all.length === 0) {
+              const seeded = createSeedSubgraphs()
+              await Promise.all(seeded.map(putSubgraph))
+              all = seeded
+            }
+            setSubgraphs(all)
+            setSelectedId(all[0]?.id ?? null)
+            if (persistedVersion) setVersion(persistedVersion)
+          }
         } finally {
           if (mounted) setHydrated(true)
         }
@@ -139,7 +222,7 @@ export function Playground() {
     return () => {
       mounted = false
     }
-  }, [])
+  }, [applyImportedState])
 
   // Fetch npm registry info
   useEffect(() => {
@@ -304,6 +387,46 @@ type Query {
     setSelectedId(null)
   }, [])
 
+  const handleCopyLink = useCallback(async () => {
+    try {
+      const payload = createSharePayload({ subgraphs, selectedId, version })
+      const shareUrl = createShareUrl(window.location.href, payload)
+      await navigator.clipboard.writeText(shareUrl)
+      toast({
+        title: "Link copied",
+        description: "Shareable playground URL copied to your clipboard.",
+      })
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Could not copy link",
+        description: error instanceof Error ? error.message : "Unknown copy error",
+      })
+    }
+  }, [selectedId, subgraphs, version])
+
+  const handleConfirmImport = useCallback(() => {
+    if (!pendingImport) {
+      return
+    }
+
+    setImportDialogOpen(false)
+    void applyImportedState(pendingImport)
+      .then(() => {
+        toast({
+          title: "Shared playground imported",
+          description: "The shared playground replaced the local subgraphs in this browser.",
+        })
+      })
+      .catch((error) => {
+        toast({
+          variant: "destructive",
+          title: "Import failed",
+          description: error instanceof Error ? error.message : "Unknown import error",
+        })
+      })
+  }, [applyImportedState, pendingImport])
+
   // Per-subgraph status (parse error?)
   const perSubgraphStatus = useMemo(() => {
     const map = new Map<string, "ok" | "error" | "idle">()
@@ -324,6 +447,22 @@ type Query {
 
   return (
     <div className="flex h-dvh min-h-0 flex-col bg-background">
+      <AlertDialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Import shared playground?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This link contains a shared playground. Importing it will replace the
+              subgraphs saved in this browser.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmImport}>Import</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Header */}
       <header className="flex h-12 shrink-0 items-center justify-between border-b bg-background px-4 md:px-5">
         <div className="flex items-center gap-2.5">
@@ -349,6 +488,16 @@ type Query {
           </div>
         </div>
         <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void handleCopyLink()}
+            className="hidden h-8 gap-1.5 px-2.5 sm:inline-flex"
+          >
+            <Share2 className="h-3.5 w-3.5" />
+            Share
+          </Button>
           <VersionSelect
             value={version}
             latest={latestVersion}
@@ -386,6 +535,17 @@ type Query {
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => void handleCopyLink()}
+            className="h-8 w-8 text-muted-foreground hover:text-foreground sm:hidden"
+            title="Share"
+          >
+            <Share2 className="h-3.5 w-3.5" />
+            <span className="sr-only">Share</span>
+          </Button>
           <ThemeToggle />
         </div>
       </header>
