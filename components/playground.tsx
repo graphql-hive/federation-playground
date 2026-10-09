@@ -13,6 +13,7 @@ import {
   GitBranch,
   LayoutList,
   Network,
+  ClipboardPaste,
   Plus,
   RotateCcw,
   Share2,
@@ -43,6 +44,7 @@ import {
 import { parse as parseGraphQL } from "graphql"
 import { fetchRegistryInfo, type VersionEntry } from "@/lib/registry"
 import { VersionSelect } from "@/components/version-select"
+import { parseImportedServices } from "@/lib/import-services"
 import { cn } from "@/lib/utils"
 import {
   AlertDialog,
@@ -362,6 +364,35 @@ type Query {
     void putSubgraph(sg)
   }, [subgraphs.length])
 
+  const handleImportFromClipboard = useCallback(async () => {
+    try {
+      const services = parseImportedServices(await navigator.clipboard.readText())
+      const now = Date.now()
+      const importedSubgraphs = services.map((service, index): Subgraph => ({
+        id: newId(),
+        name: service.name.trim(),
+        sdl: service.sdl,
+        enabled: true,
+        order: subgraphs.length + index,
+        updatedAt: now,
+      }))
+
+      await Promise.all(importedSubgraphs.map(putSubgraph))
+      setSubgraphs((current) => [...current, ...importedSubgraphs])
+      setSelectedId(importedSubgraphs[0]?.id ?? null)
+      toast({
+        title: "Services imported",
+        description: `${importedSubgraphs.length} ${importedSubgraphs.length === 1 ? "service" : "services"} added from the clipboard.`,
+      })
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Could not import services",
+        description: error instanceof Error ? error.message : "Unable to read the clipboard",
+      })
+    }
+  }, [subgraphs.length])
+
   const handleDelete = useCallback(
     (id: string) => {
       setSubgraphs((prev) => {
@@ -565,6 +596,7 @@ type Query {
                 statuses={perSubgraphStatus}
                 onSelect={setSelectedId}
                 onAdd={handleAdd}
+                onImport={() => void handleImportFromClipboard()}
                 onDelete={handleDelete}
               />
             </ResizablePanel>
@@ -602,6 +634,7 @@ type Query {
                   statuses={perSubgraphStatus}
                   onSelect={(id) => { setSelectedId(id); setMobileTab("editor") }}
                   onAdd={() => { handleAdd(); setMobileTab("editor") }}
+                  onImport={() => void handleImportFromClipboard()}
                   onDelete={handleDelete}
                 />
               )}
@@ -667,6 +700,7 @@ function SubgraphSidebar({
   statuses,
   onSelect,
   onAdd,
+  onImport,
   onDelete,
 }: {
   subgraphs: Subgraph[]
@@ -674,6 +708,7 @@ function SubgraphSidebar({
   statuses: Map<string, "ok" | "error" | "idle">
   onSelect: (id: string) => void
   onAdd: () => void
+  onImport: () => void
   onDelete: (id: string) => void
 }) {
   return (
@@ -682,15 +717,28 @@ function SubgraphSidebar({
         <div>
           <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Subgraphs</h2>
         </div>
-        <Button
-          type="button"
-          size="sm"
-          onClick={onAdd}
-          className="h-7 gap-1 px-2 text-xs"
-        >
-          <Plus className="h-3 w-3" />
-          Add
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onImport}
+            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+            title="Import services from clipboard"
+          >
+            <ClipboardPaste className="h-3.5 w-3.5" />
+            <span className="sr-only">Import services from clipboard</span>
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            onClick={onAdd}
+            className="h-7 gap-1 px-2 text-xs"
+          >
+            <Plus className="h-3 w-3" />
+            Add
+          </Button>
+        </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {subgraphs.length === 0 ? (
